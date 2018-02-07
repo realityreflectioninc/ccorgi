@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,6 +11,7 @@ public class TestModule : MonoBehaviour
     public RawImage targetImg;
     private int index = -1;
     public Button button;
+    public Text text;
     private DateTime startTime;
 
     void Awake()
@@ -24,8 +26,8 @@ public class TestModule : MonoBehaviour
 	void Start ()
     {
         ChangeImageIndex(0);
-        
         button.onClick.AddListener(NextUrl);
+        Corgi.Memorize(urls.Select(x => new CorgiMemorize() { url = x, version = 0 }).ToList());
     }
 
     public void NextUrl()
@@ -50,11 +52,13 @@ public class TestModule : MonoBehaviour
         button.enabled = true;
         Debug.Log("Timespan : " + (DateTime.Now - startTime).TotalMilliseconds + " ms");
         targetImg.texture = tex;
+        text.text = "Timespan : " + (DateTime.Now - startTime).TotalMilliseconds + " ms";
     }
 
     void OnFetchFailed(string url, int version)
     {
         button.enabled = true;
         Debug.Log("Fetch Faield " + url + " v" + version);
+        text.text = "Fetch Faield " + url + " v" + version;
     }
 }

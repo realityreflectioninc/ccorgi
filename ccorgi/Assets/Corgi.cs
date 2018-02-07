@@ -5,6 +5,15 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
+public delegate void FallbackAction(string url, int version);
+public delegate void CorgiAction(string url, int version, Action<Texture2D> resolve);
+
+public class CorgiInitData
+{
+    public CorgiDiskData diskData;
+    public List<CorgiMemorize> memorize; 
+}
+
 public class Corgi : MonoBehaviour
 {
     private static Corgi _instance;
@@ -21,30 +30,12 @@ public class Corgi : MonoBehaviour
         }
     }
 
-    public delegate void FallbackAction(string url, int version);
-    public delegate void CorgiAction(string url, int version, Action<Texture2D> resolve);
-
-    public int preload_capacity = 10;
-    public int memory_capacity = 50;
-    public int disk_capacity = 500;
     //public FallbackAction fallback_delegate;
-
-    const string DISK_CACHE_PATH = "diskcache_test.json";
-
-    Dictionary<string, Texture2D> memoryCache = new Dictionary<string, Texture2D>();
-    Dictionary<string, string> diskCache = new Dictionary<string, string>();
-
-    // TODO
-    // CorgiDisk corgiDisk = new CorgiDisk();
-
-
-    public enum CorgiLayer
-    {
-        PRELOAD,
-        MEMORY,
-        DISK,
-        WEB,
-    }
+    const string INIT_DATA_PATH = "corgi_init_data.json";
+    CorgiDisk disk;
+    CorgiMemory memory;
+    List<CorgiMemorize> memorize;
+    FallbackAction fallbacks;
 
     void Awake()
     {
@@ -52,23 +43,37 @@ public class Corgi : MonoBehaviour
             _instance = this;
 
         DontDestroyOnLoad(this);
-        var path = Path.Combine(Application.persistentDataPath, DISK_CACHE_PATH);
-        var content = File.ReadAllText(path);
-        Debug.Log("Awake Data" + content);
 
-        if (!string.IsNullOrEmpty(content))
-            diskCache = JsonConvert.DeserializeObject<Dictionary<string, string>>(content);
+        disk = gameObject.AddComponent<CorgiDisk>();
+        memory = gameObject.AddComponent<CorgiMemory>();
 
-        if (diskCache == null)
-            diskCache = new Dictionary<string, string>();
+        var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
+        if (!File.Exists(path))
+            return;
+
+        var loadData = File.ReadAllText(path);
+        Debug.Log("Awake Data" + loadData);
+
+        if (string.IsNullOrEmpty(loadData))
+            return;
+
+        var initData = JsonConvert.DeserializeObject<CorgiInitData>(loadData);
+        if (initData == null)
+            return;
+
+        disk.Init(initData.diskData);
+
+        if (initData.memorize == null)
+            return;
+
+        foreach (var memo in initData.memorize)
+        {
+            _Fetch(memo.url, memo.version, (tex) => { }, (url, version) => { });
+        }
     }
-    
+
     void OnDestroy()
     {
-        var path = Path.Combine(Application.persistentDataPath, DISK_CACHE_PATH);
-        string content = JsonConvert.SerializeObject(diskCache);
-        Debug.Log(content);
-        File.WriteAllText(path, content);
     }
 
     public static void Fetch(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
@@ -76,27 +81,18 @@ public class Corgi : MonoBehaviour
         instance._Fetch(url, version, resolve, reject);
     }
 
-    public void _Fetch(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
+    void _Fetch(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
     {
-        Texture2D tex;
-        string path;
-        if (memoryCache.TryGetValue(url, out tex))
+        memory.Load(url, version, resolve, (u, v) =>
         {
-            Debug.Log("Memory hit");
-            resolve(tex);
-        }
-        else if (diskCache.TryGetValue(url, out path))
-        {
-            StartCoroutine(DownloadLocal(url, version, path, resolve, reject));
-        }
-        else
-        {
-            StartCoroutine(DownloadURL(url, version, (bytes, texture) =>
+            disk.Load(url, version, (tex) =>
             {
-                resolve(texture);
-                SaveFile(bytes, url);
-            }, reject));
-        }
+                resolve(tex);
+                memory.Save(tex, url, version);
+                _SaveData();
+            }, 
+            fallbacks);
+        });
     }
 
     public static void AddCacheLayer(int priority, CorgiAction action)
@@ -104,91 +100,48 @@ public class Corgi : MonoBehaviour
         instance._AddCacheLayer(priority, action);
     }
 
-    public void _AddCacheLayer(int priority, CorgiAction action)
+    void _AddCacheLayer(int priority, CorgiAction action)
     {
-
     }
 
-    public static void Capacity(CorgiLayer layer, int size)
+    public static void Fallback(FallbackAction fallback)
     {
-        instance._Capacity(layer, size);
+        instance._Fallback(fallback);
     }
 
-    public void _Capacity(CorgiLayer layer, int size)
+    void _Fallback(FallbackAction fallback)
     {
-
+        fallbacks += fallback;
     }
 
-    public static void Memorize()
+    public static void Memorize(List<CorgiMemorize> memo)
     {
-        instance._Memorize();
+        instance._Memorize(memo);
     }
 
-    public void _Memorize()
+    void _Memorize(List<CorgiMemorize> memo)
     {
-
+        memorize = memo;
     }
 
-    void SaveFile(byte[] bytes, string url)
+    public static void SaveData()
     {
-        var path = Path.GetRandomFileName();
-        diskCache[url] = path;
-        var realPath = Path.Combine(Application.temporaryCachePath, path);
+        _instance._SaveData();
+    }
+
+    public void _SaveData()
+    {
+        CorgiInitData saveData = new CorgiInitData();
+        saveData.diskData = disk.GetData();
+        saveData.memorize = memorize;
+        var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
+        string content = JsonConvert.SerializeObject(saveData);
+        Debug.Log(content);
+
         var t = new System.Threading.Thread(() =>
         {
-            File.WriteAllBytes(realPath, bytes);
+            File.WriteAllText(path, content);
         });
         t.Start();
-    }
-
-    IEnumerator DownloadURL(string url, int version, Action<byte[], Texture2D> callback, FallbackAction reject)
-    {
-        var www = new WWW(url);
-        yield return www;
-        if(!string.IsNullOrEmpty(www.error))
-        {
-            reject(url, version);
-            //fallback_delegate(url, version);
-        }
-        else
-        {
-            Debug.Log("Web hit");
-            Texture2D tex;
-            if (!memoryCache.TryGetValue(url, out tex))
-            {
-                tex = new Texture2D(0, 0);
-                memoryCache.Add(url, tex);
-            }
-            www.LoadImageIntoTexture(tex);
-            callback(www.bytes, tex);
-        }
-    }
-
-    IEnumerator DownloadLocal(string url, int version, string path, Action<Texture2D> resolve, FallbackAction reject)
-    {
-        var realPath = Path.Combine(Application.temporaryCachePath, path);
-        var www = new WWW("file:///" + realPath);
-        yield return www;
-        if (!string.IsNullOrEmpty(www.error))
-        {
-            Debug.Log("Download Local Failed!");
-            yield return DownloadURL(url, version, (bytes, texture) =>
-            {
-                resolve(texture);
-                SaveFile(bytes, url);
-            }, reject);
-        }
-        else
-        {
-            Debug.Log("Disk hit");
-            Texture2D tex;
-            if (!memoryCache.TryGetValue(url, out tex))
-            {
-                tex = new Texture2D(0, 0);
-                memoryCache.Add(url, tex);
-            }
-            www.LoadImageIntoTexture(tex);
-            resolve(tex);
-        }
     }
 }
