@@ -12,6 +12,7 @@ public class TestModule : MonoBehaviour
     private int index = -1;
     public Button button;
     public Text text;
+    public Texture2D fallbackTex;
     private DateTime startTime;
 
     void Awake()
@@ -19,7 +20,7 @@ public class TestModule : MonoBehaviour
         var rand = new System.Random();
         for (int i = 0; i < 10; ++i)
         {
-            urls.Add("https://picsum.photos/200/300/?image=" + rand.Next() % 10);
+            urls.Add("https://picsum.photos/200/300/?image=" + rand.Next() % 100);
         }
     }
 
@@ -43,7 +44,8 @@ public class TestModule : MonoBehaviour
         button.enabled = false;
         index = _index;
         startTime = DateTime.Now;
-        Corgi.Fetch(urls[index], 0, OnFetchDone, OnFetchFailed);
+        Corgi.Fetch(urls[index], 0, OnFetchDone);
+        Corgi.Fallback(OnFetchFailed);
     }
 
 
@@ -55,10 +57,9 @@ public class TestModule : MonoBehaviour
         text.text = "Timespan : " + (DateTime.Now - startTime).TotalMilliseconds + " ms";
     }
 
-    void OnFetchFailed(string url, int version)
+    void OnFetchFailed(string url, int version, ResolveAction resolve)
     {
-        button.enabled = true;
-        Debug.Log("Fetch Faield " + url + " v" + version);
-        text.text = "Fetch Faield " + url + " v" + version;
+        Debug.Log("Fetch Failed! " + url + " v." + version);
+        resolve(fallbackTex);
     }
 }

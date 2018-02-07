@@ -51,11 +51,12 @@ public class CorgiDisk : MonoBehaviour
         };
     }
 
-    public void Save(byte[] bytes, string url, int version)
+    public void Save(Texture2D tex, string url, int version)
     {
+        var bytes = tex.GetRawTextureData();
         var path = Path.GetRandomFileName();
         var size = bytes.Length;
-        map.Add(url, new CorgiDiskChunk() { url = url, version = version, path = path, size = size });
+        map[url] = new CorgiDiskChunk() { url = url, version = version, path = path, size = size };
         queue.AddFirst(url);
         useSize += size;
         SaveFile(path, bytes);
@@ -65,7 +66,7 @@ public class CorgiDisk : MonoBehaviour
         }
     }
 
-    public void Load(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
+    public void Load(string url, int version, ResolveAction resolve, FallbackAction fallback)
     {
         CorgiDiskChunk chunk = null;
         if(map.TryGetValue(url, out chunk))
@@ -74,27 +75,22 @@ public class CorgiDisk : MonoBehaviour
             {
                 queue.Remove(chunk.url);
                 queue.AddFirst(chunk.url);
-                StartCoroutine(DownloadLocal(chunk, resolve, reject));
+                StartCoroutine(DownloadLocal(chunk, resolve, fallback));
+                return;
             }
             else
             {
                 queue.Remove(chunk.url);
                 RemoveChunk(chunk);
-                StartCoroutine(DownloadURL(url, version, (bytes, tex) =>
-                {
-                    Save(bytes, chunk.url, chunk.version);
-                    resolve(tex);
-                }, reject));
             }   
         }
-        else
+
+        ResolveAction newResolve = (tex) =>
         {
-            StartCoroutine(DownloadURL(url, version, (bytes, tex) =>
-            {
-                Save(bytes, url, version);
-                resolve(tex);
-            }, reject));
-        }
+            Save(tex, url, version);
+            resolve(tex);
+        };
+        fallback(url, version, newResolve);
     }
 
     public void SetCapacity(int _capacity)
@@ -140,7 +136,7 @@ public class CorgiDisk : MonoBehaviour
         t.Start();
     }
 
-    IEnumerator DownloadLocal(CorgiDiskChunk chunk, Action<Texture2D> resolve, FallbackAction reject)
+    IEnumerator DownloadLocal(CorgiDiskChunk chunk, ResolveAction resolve, FallbackAction fallback)
     {
         var realPath = Path.Combine(Application.temporaryCachePath, chunk.path);
         var www = new WWW("file:///" + realPath);
@@ -150,11 +146,12 @@ public class CorgiDisk : MonoBehaviour
         {
             Debug.Log("[ERR]" + www.error + "\n" + chunk.url + " " + chunk.path);
             RemoveChunk(chunk);
-            yield return DownloadURL(chunk.url, chunk.version, (bytes, tex) =>
+            ResolveAction newResolve = (tex) =>
             {
-                Save(bytes, chunk.url, chunk.version);
+                Save(tex, chunk.url, chunk.version);
                 resolve(tex);
-            }, reject);
+            };
+            fallback(chunk.url, chunk.version, newResolve);
         }
         else
         {
@@ -166,20 +163,21 @@ public class CorgiDisk : MonoBehaviour
     }
 
 
-    IEnumerator DownloadURL(string url, int version, Action<byte[], Texture2D> resolve, FallbackAction reject)
+    IEnumerator DownloadURL(string url, int version, ResolveAction resolve, FallbackAction fallback)
     {
         var www = new WWW(url);
         yield return www;
-        if (!string.IsNullOrEmpty(www.error))
-        {
-            reject(url, version);
-        }
-        else
-        {
+        if (string.IsNullOrEmpty(www.error))
+        { 
             Debug.Log("Web hit");
             Texture2D tex = new Texture2D(0, 0);
             www.LoadImageIntoTexture(tex);
-            resolve(www.bytes, tex);
+            resolve(tex);
+        }
+        else
+        {
+            Debug.Log("Web Failed!");
+            fallback(url, version, resolve);
         }
     }
 }

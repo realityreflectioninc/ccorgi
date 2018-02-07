@@ -14,7 +14,7 @@ public class CorgiMemory : MonoBehaviour
     public void Save(Texture2D tex, string url, int version)
     {
         var size = tex.GetRawTextureData().Length;
-        data.Add(url, new CorgiMemoryChunk() { url = url, version = version, tex = tex, size = size });
+        data[url] = new CorgiMemoryChunk() { url = url, version = version, tex = tex, size = size };
         queue.AddFirst(url);
         useSize += size;
 
@@ -24,7 +24,7 @@ public class CorgiMemory : MonoBehaviour
         }
     }
 
-    public void Load(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
+    public void Load(string url, int version, ResolveAction resolve, FallbackAction fallback)
     {
         CorgiMemoryChunk chunk = null;
         if (data.TryGetValue(url, out chunk))
@@ -34,18 +34,22 @@ public class CorgiMemory : MonoBehaviour
                 queue.Remove(chunk.url);
                 queue.AddFirst(chunk.url);
                 resolve(chunk.tex);
+                return;
             }
             else
             {
                 queue.Remove(chunk.url);
                 RemoveChunk(chunk);
-                reject(url, version);
             }
         }
-        else
+
+        ResolveAction newResolve = (tex) =>
         {
-            reject(url, version);
-        }
+            Debug.Log("memory new resolved!");
+            resolve(tex);
+            Save(tex, url, version);
+        };
+        fallback(url, version, newResolve);
     }
 
     public void SetCapacity(int _capacity)

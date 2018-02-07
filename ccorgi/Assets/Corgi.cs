@@ -5,14 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
-public delegate void FallbackAction(string url, int version);
-public delegate void CorgiAction(string url, int version, Action<Texture2D> resolve);
-
-public class CorgiInitData
-{
-    public CorgiDiskData diskData;
-    public List<CorgiMemorize> memorize; 
-}
+public delegate void FallbackAction(string url, int version, ResolveAction resolve);
+public delegate void ResolveAction(Texture2D tex);
 
 public class Corgi : MonoBehaviour
 {
@@ -30,12 +24,13 @@ public class Corgi : MonoBehaviour
         }
     }
 
-    //public FallbackAction fallback_delegate;
     const string INIT_DATA_PATH = "corgi_init_data.json";
+
     CorgiDisk disk;
     CorgiMemory memory;
+    CorgiWeb web;
     List<CorgiMemorize> memorize;
-    FallbackAction fallbacks;
+    FallbackAction fallback;
 
     void Awake()
     {
@@ -46,72 +41,68 @@ public class Corgi : MonoBehaviour
 
         disk = gameObject.AddComponent<CorgiDisk>();
         memory = gameObject.AddComponent<CorgiMemory>();
+        web = gameObject.AddComponent<CorgiWeb>();
 
         var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
         if (!File.Exists(path))
             return;
 
-        var loadData = File.ReadAllText(path);
-        Debug.Log("Awake Data" + loadData);
+        var content = File.ReadAllText(path);
+        Debug.Log("Awake Data" + content);
 
-        if (string.IsNullOrEmpty(loadData))
+        if (string.IsNullOrEmpty(content))
             return;
 
-        var initData = JsonConvert.DeserializeObject<CorgiInitData>(loadData);
+        var initData = JsonConvert.DeserializeObject<CorgiDiskData>(content);
         if (initData == null)
             return;
 
-        disk.Init(initData.diskData);
-
-        if (initData.memorize == null)
-            return;
-
-        foreach (var memo in initData.memorize)
-        {
-            _Fetch(memo.url, memo.version, (tex) => { }, (url, version) => { });
-        }
+        disk.Init(initData);
     }
 
     void OnDestroy()
     {
     }
 
-    public static void Fetch(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
+    public static void Fetch(string url, int version, ResolveAction resolve)
     {
-        instance._Fetch(url, version, resolve, reject);
+        instance._Fetch(url, version, resolve);
     }
 
-    void _Fetch(string url, int version, Action<Texture2D> resolve, FallbackAction reject)
+    void _Fetch(string url, int version, ResolveAction resolve)
     {
-        memory.Load(url, version, resolve, (u, v) =>
-        {
-            disk.Load(url, version, (tex) =>
-            {
-                resolve(tex);
-                memory.Save(tex, url, version);
-                _SaveData();
-            }, 
-            fallbacks);
-        });
+        memory.Load(url, version, resolve, OnMemoryFaield);
     }
 
-    public static void AddCacheLayer(int priority, CorgiAction action)
+    void OnMemoryFaield(string url, int version, ResolveAction resolve)
+    {
+        disk.Load(url, version, resolve, OnDiskFailed);
+    }
+
+    void OnDiskFailed(string url, int version, ResolveAction resolve)
+    {
+        web.Load(url, version, resolve, fallback);
+    }
+
+    /*
+    public static void AddCacheLayer(int priority, FallbackAction action)
     {
         instance._AddCacheLayer(priority, action);
     }
 
-    void _AddCacheLayer(int priority, CorgiAction action)
+    void _AddCacheLayer(int priority, FallbackAction action)
     {
     }
+    */
 
     public static void Fallback(FallbackAction fallback)
     {
         instance._Fallback(fallback);
     }
 
-    void _Fallback(FallbackAction fallback)
+    void _Fallback(FallbackAction _fallback)
     {
-        fallbacks += fallback;
+        _fallback += _fallback;
     }
 
     public static void Memorize(List<CorgiMemorize> memo)
@@ -121,7 +112,10 @@ public class Corgi : MonoBehaviour
 
     void _Memorize(List<CorgiMemorize> memo)
     {
-        memorize = memo;
+        foreach (var m in memo)
+        {
+            _Fetch(m.url, m.version, (tex) => { });
+        }
     }
 
     public static void SaveData()
@@ -131,17 +125,20 @@ public class Corgi : MonoBehaviour
 
     public void _SaveData()
     {
-        CorgiInitData saveData = new CorgiInitData();
-        saveData.diskData = disk.GetData();
-        saveData.memorize = memorize;
+        CorgiDiskData saveData = disk.GetData();
+        if (saveData == null)
+            return;
+
         var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
         string content = JsonConvert.SerializeObject(saveData);
         Debug.Log(content);
-
         var t = new System.Threading.Thread(() =>
         {
             File.WriteAllText(path, content);
         });
         t.Start();
     }
+
+
+
 }
