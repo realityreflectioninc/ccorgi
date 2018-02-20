@@ -6,10 +6,11 @@ using System.IO;
 using UnityEngine;
 
 public delegate void FallbackAction(string url, int version, ResolveAction resolve);
-public delegate void ResolveAction(Texture2D tex);
+public delegate void ResolveAction(byte[] bytes, Texture2D tex);
 
 public class Corgi : MonoBehaviour
 {
+    public static int DownloadAlways = -1;
     private static Corgi _instance;
     public static Corgi instance
     {
@@ -24,13 +25,9 @@ public class Corgi : MonoBehaviour
         }
     }
 
-    const string INIT_DATA_PATH = "corgi_init_data.json";
-
-    CorgiDisk disk;
-    CorgiMemory memory;
-    CorgiWeb web;
-    List<CorgiMemorize> memorize;
-    FallbackAction fallback;
+    private List<ICorgiLayer> corgiLayers;
+    private List<CorgiMemorize> memorizeList;
+    private FallbackAction fallbackDelegate;
 
     void Awake()
     {
@@ -39,25 +36,12 @@ public class Corgi : MonoBehaviour
 
         DontDestroyOnLoad(this);
 
-        disk = gameObject.AddComponent<CorgiDisk>();
-        memory = gameObject.AddComponent<CorgiMemory>();
-        web = gameObject.AddComponent<CorgiWeb>();
+        corgiLayers = new List<ICorgiLayer>(){ new CorgiMemory(), new CorgiDisk(),  new CorgiWeb() };
 
-        var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
-        if (!File.Exists(path))
-            return;
-
-        var content = File.ReadAllText(path);
-        Debug.Log("Awake Data" + content);
-
-        if (string.IsNullOrEmpty(content))
-            return;
-
-        var initData = JsonConvert.DeserializeObject<CorgiDiskData>(content);
-        if (initData == null)
-            return;
-
-        disk.Init(initData);
+        foreach (var corgiLayer in corgiLayers)
+        {
+            corgiLayer.Start(this);
+        }
     }
 
     void OnDestroy()
@@ -66,22 +50,21 @@ public class Corgi : MonoBehaviour
 
     public static void Fetch(string url, int version, ResolveAction resolve)
     {
-        instance._Fetch(url, version, resolve);
+        instance._Fetch(url, version, resolve, 0);
     }
 
-    void _Fetch(string url, int version, ResolveAction resolve)
+    void _Fetch(string url, int version, ResolveAction resolve, int layerIndex)
     {
-        memory.Load(url, version, resolve, OnMemoryFaield);
-    }
+        if (layerIndex >= corgiLayers.Count)
+        {
+            fallbackDelegate(url, version, resolve);
+            return;
+        }
 
-    void OnMemoryFaield(string url, int version, ResolveAction resolve)
-    {
-        disk.Load(url, version, resolve, OnDiskFailed);
-    }
-
-    void OnDiskFailed(string url, int version, ResolveAction resolve)
-    {
-        web.Load(url, version, resolve, fallback);
+        corgiLayers[layerIndex].Load(url, version, resolve,
+            (_url, _version, _resolve) => {
+                _Fetch(_url, _version, _resolve, layerIndex + 1);
+            });
     }
 
     /*
@@ -102,43 +85,17 @@ public class Corgi : MonoBehaviour
 
     void _Fallback(FallbackAction _fallback)
     {
-        _fallback += _fallback;
+        fallbackDelegate = _fallback;
     }
 
-    public static void Memorize(List<CorgiMemorize> memo)
-    {
-        instance._Memorize(memo);
-    }
-
-    void _Memorize(List<CorgiMemorize> memo)
+    public static void Memorize(CorgiMemorize[] memo)
     {
         foreach (var m in memo)
         {
-            _Fetch(m.url, m.version, (tex) => { });
+            if (string.IsNullOrEmpty(m.url))
+                continue;
+
+            Fetch(m.url, m.version, (bytes, tex) => { });
         }
     }
-
-    public static void SaveData()
-    {
-        _instance._SaveData();
-    }
-
-    public void _SaveData()
-    {
-        CorgiDiskData saveData = disk.GetData();
-        if (saveData == null)
-            return;
-
-        var path = Path.Combine(Application.persistentDataPath, INIT_DATA_PATH);
-        string content = JsonConvert.SerializeObject(saveData);
-        Debug.Log(content);
-        var t = new System.Threading.Thread(() =>
-        {
-            File.WriteAllText(path, content);
-        });
-        t.Start();
-    }
-
-
-
 }

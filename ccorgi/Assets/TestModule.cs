@@ -20,7 +20,7 @@ public class TestModule : MonoBehaviour
         var rand = new System.Random();
         for (int i = 0; i < 10; ++i)
         {
-            urls.Add("https://picsum.photos/200/300/?image=" + rand.Next() % 100);
+            urls.Add("https://picsum.photos/200/300/?image=" + rand.Next() % 1000);
         }
     }
 
@@ -28,7 +28,7 @@ public class TestModule : MonoBehaviour
     {
         ChangeImageIndex(0);
         button.onClick.AddListener(NextUrl);
-        Corgi.Memorize(urls.Select(x => new CorgiMemorize() { url = x, version = 0 }).ToList());
+        Corgi.Memorize(urls.Select(x => new CorgiMemorize() { url = x, version = 0 }).ToArray());
     }
 
     public void NextUrl()
@@ -49,7 +49,7 @@ public class TestModule : MonoBehaviour
     }
 
 
-    void OnFetchDone(Texture2D tex)
+    void OnFetchDone(byte[] bytes, Texture2D tex)
     {
         button.enabled = true;
         Debug.Log("Timespan : " + (DateTime.Now - startTime).TotalMilliseconds + " ms");
@@ -60,6 +60,6 @@ public class TestModule : MonoBehaviour
     void OnFetchFailed(string url, int version, ResolveAction resolve)
     {
         Debug.Log("Fetch Failed! " + url + " v." + version);
-        resolve(fallbackTex);
+        resolve(null, fallbackTex);
     }
 }

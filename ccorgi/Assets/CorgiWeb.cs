@@ -8,11 +8,18 @@ using System.Text;
 using UnityEngine;
 
 
-public class CorgiWeb : MonoBehaviour
+public class CorgiWeb : ICorgiLayer
 {
+    private Corgi corgi;
+
+    public void Start(Corgi _corgi)
+    {
+        corgi = _corgi;
+    }
+
     public void Load(string url, int version, ResolveAction resolve, FallbackAction fallback)
     {
-        StartCoroutine(DownloadURL(url, version, resolve, fallback));
+        corgi.StartCoroutine(DownloadURL(url, version, resolve, fallback));
     }
     
     IEnumerator DownloadURL(string url, int version, ResolveAction resolve, FallbackAction fallback)
@@ -24,7 +31,7 @@ public class CorgiWeb : MonoBehaviour
             Debug.Log("Web hit");
             Texture2D tex = new Texture2D(0, 0);
             www.LoadImageIntoTexture(tex);
-            resolve(tex);
+            resolve(www.bytes, tex);
         }
         else
         {

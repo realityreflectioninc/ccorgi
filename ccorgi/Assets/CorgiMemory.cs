@@ -4,18 +4,37 @@ using System.Linq;
 using System.Text;
 using UnityEngine;
 
-public class CorgiMemory : MonoBehaviour
+public class CorgiMemory : ICorgiLayer
 {
-    long capacity = 50 * 1048576;
-    long useSize = 0;
-    Dictionary<string, CorgiMemoryChunk> data = new Dictionary<string, CorgiMemoryChunk>();
-    LinkedList<string> queue = new LinkedList<string>();
+    private long capacity = 50 * 1048576;
+    private long useSize = 0;
+    private Dictionary<string, CorgiMemoryChunk> chunkData = new Dictionary<string, CorgiMemoryChunk>();
+    private LinkedList<string> chunkPriorityQueue = new LinkedList<string>();
+    private Dictionary<string, ResolveAction> resolveQueues = new Dictionary<string, ResolveAction>();
+    private Corgi corgi;
+
+    public void Start(Corgi _corgi)
+    {
+        corgi = _corgi;
+    }
 
     public void Save(Texture2D tex, string url, int version)
     {
+        if (tex == null)
+        {
+            if (chunkData.ContainsKey(url))
+                chunkData.Remove(url);
+
+            if (chunkPriorityQueue.Any(x => x == url))
+                chunkPriorityQueue.Remove(url);
+
+            return;
+        }
+
+
         var size = tex.GetRawTextureData().Length;
-        data[url] = new CorgiMemoryChunk() { url = url, version = version, tex = tex, size = size };
-        queue.AddFirst(url);
+        chunkData[url] = new CorgiMemoryChunk() { url = url, version = version, tex = tex, size = size };
+        chunkPriorityQueue.AddFirst(url);
         useSize += size;
 
         while (capacity < useSize)
@@ -27,29 +46,42 @@ public class CorgiMemory : MonoBehaviour
     public void Load(string url, int version, ResolveAction resolve, FallbackAction fallback)
     {
         CorgiMemoryChunk chunk = null;
-        if (data.TryGetValue(url, out chunk))
+        if (chunkData.TryGetValue(url, out chunk))
         {
-            if (chunk.version >= version)
+            // 아래 레이어에서 로드중인데 계속 요청이 들어오면 해당 key resolveQueue에 저장했다가 완료시 한꺼번에 호출
+            if (chunk == null)
             {
-                queue.Remove(chunk.url);
-                queue.AddFirst(chunk.url);
-                resolve(chunk.tex);
+                Debug.Log("fetch pending.. " + url + " v." + version);
+                ResolveAction delegates;
+                if (resolveQueues.TryGetValue(url, out delegates))
+                    delegates += resolve;
+                else
+                    resolveQueues.Add(url, resolve);
+
+                return;
+            }
+            else if (version >= 0 && chunk.version >= version)
+            {
+                chunkPriorityQueue.Remove(chunk.url);
+                chunkPriorityQueue.AddFirst(chunk.url);
+                resolve(null, chunk.tex);
                 return;
             }
             else
             {
-                queue.Remove(chunk.url);
+                chunkPriorityQueue.Remove(chunk.url);
                 RemoveChunk(chunk);
             }
         }
 
-        ResolveAction newResolve = (tex) =>
+        //아래 레이어에서 로드중인경우 체크용으로 해당 key chunk에 null을 넣어둔다.
+        chunkData.Add(url, null);
+            
+        fallback(url, version, (bytes, tex) =>
         {
-            Debug.Log("memory new resolved!");
-            resolve(tex);
-            Save(tex, url, version);
-        };
-        fallback(url, version, newResolve);
+            resolve(bytes, tex);
+            OnResolve(url, version, tex);
+        });
     }
 
     public void SetCapacity(int _capacity)
@@ -63,15 +95,27 @@ public class CorgiMemory : MonoBehaviour
 
     void RemoveLastChunk()
     {
-        var lastKey = queue.Last.Value;
-        CorgiChunk targetChunk = data[lastKey];
+        var lastKey = chunkPriorityQueue.Last.Value;
+        chunkPriorityQueue.RemoveLast();
+        CorgiChunk targetChunk = chunkData[lastKey];
         RemoveChunk(targetChunk);
     }
 
     void RemoveChunk(CorgiChunk chunk)
     {
         useSize -= chunk.size;
-        data.Remove(chunk.url);
+        chunkData.Remove(chunk.url);
+    }
+
+    void OnResolve(string url, int version, Texture2D tex)
+    {
+        Save(tex, url, version);
+        ResolveAction resolves;
+        if(resolveQueues.TryGetValue(url, out resolves))
+        {
+            resolves(null, tex);
+            resolveQueues.Remove(url);
+        }
     }
 }
 
